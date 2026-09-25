@@ -38,8 +38,10 @@ function word(n, one, few, many) {
 const plural = (n, one, few, many) => `${n} ${word(n, one, few, many)}`;
 
 const yt = (id, start) => `https://www.youtube.com/watch?v=${id}` + (start ? `&t=${start}s` : "");
+// enablejsapi=1 — чтобы плееру можно было отправлять команды (перемотка по главам)
 const ytEmbed = (id, start) =>
-  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1` + (start ? `&start=${start}` : "");
+  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1&fs=1&enablejsapi=1` +
+  `&origin=${encodeURIComponent(location.origin)}` + (start ? `&start=${start}` : "");
 const ytThumb = (id) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 const stars = (level) => "⭐".repeat(level);
 
@@ -344,8 +346,12 @@ function pyStatusHtml(state) {
 
 let backTarget = null;
 let mainHandler = null;
+let overlayClose = null; // если открыто что-то поверх экрана (видео на весь экран), «Назад» закрывает сначала его
 if (IN_TG) {
-  tg.BackButton.onClick(() => backTarget && go(backTarget));
+  tg.BackButton.onClick(() => {
+    if (overlayClose) overlayClose();
+    else if (backTarget) go(backTarget);
+  });
   tg.MainButton.onClick(() => mainHandler && mainHandler());
 }
 
@@ -386,6 +392,7 @@ function route() {
 }
 
 function render() {
+  Video.reset();
   cleanups.forEach((fn) => fn());
   cleanups = [];
   actions = {};
@@ -589,25 +596,42 @@ function viewTopic(id) {
   const index = App.topicOrder.indexOf(id);
   const prev = App.topics[App.topicOrder[index - 1]], next = App.topics[App.topicOrder[index + 1]];
   const first = topic.chapters[0];
-  const video = first ? `
-    <div class="card video">
-      <div class="player" data-act="play" style="background-image:url('${ytThumb(section.video)}')">
-        <span class="play-big">▶</span>
-        <span class="label">Смотреть с ${clock(first.start)} · ≈ ${minutes(topic)} мин</span>
+  const short = topic.shorts[0];
+  // Что показывает плеер сначала: кусок лекции или, если его нет, первый шорт
+  const intro = first
+    ? { video: section.video, start: first.start, label: `Смотреть с ${clock(first.start)} · ≈ ${minutes(topic)} мин` }
+    : short ? { video: short.id, start: 0, label: `Шорт «${short.title}» · ${short.duration}` } : null;
+  const dock = intro ? `
+    <div class="player-dock" id="dock">
+      <div class="player">
+        <button class="cover" data-act="play" data-video="${intro.video}" data-start="${intro.start}"
+          style="background-image:url('${ytThumb(intro.video)}')">
+          <span class="play-big">▶</span>
+          <span class="label">${esc(intro.label)}</span>
+        </button>
       </div>
-      <div class="head">🎬 Главы лекции <span>· нажми, чтобы открыть в YouTube</span></div>
+      <div class="player-bar" hidden>
+        <button class="tool" data-act="theater">⤢ На весь экран</button>
+        <button class="tool" data-act="youtube">↗ В YouTube</button>
+        <button class="tool" data-act="stop">✕ Закрыть</button>
+      </div>
+    </div>` : "";
+  const chapters = first ? `
+    <div class="card video">
+      <div class="head">🎬 Главы лекции <span>· нажми — видео перемотается</span></div>
       <div class="list" style="margin:0;border-radius:0">
         ${topic.chapters.map((chapter) => `
-          <button class="row plain" data-link="${yt(section.video, chapter.start)}">
+          <button class="row plain" data-act="play" data-video="${section.video}" data-start="${chapter.start}">
             <span class="time">${clock(chapter.start)}</span>
             <span class="main"><span class="title normal">${esc(chapter.title)}</span>
               <span class="meta">${Math.max(1, Math.round(chapter.length / 60))} мин</span></span>
-            <span class="chev">↗</span>
+            <span class="chev">▶</span>
           </button>`).join("")}
       </div>
     </div>` : "";
   const extras = [
-    ...topic.shorts.map((short) => `<button class="chip" data-link="${yt(short.id)}">🎬 ${esc(short.title)} · ${short.duration}</button>`),
+    ...topic.shorts.map((item) =>
+      `<button class="chip" data-act="play" data-video="${item.id}" data-start="0">🎬 ${esc(item.title)} · ${item.duration}</button>`),
     ...topic.links.map((link) => `<button class="chip" data-link="${esc(link.url)}">${esc(link.label)}</button>`),
   ];
   const html = `
@@ -615,7 +639,8 @@ function viewTopic(id) {
       <div class="crumb"><a href="#/">Курс</a> › <a href="#/s/${section.num}">${section.emoji} Раздел ${section.num}</a></div>
       <h1>${topic.id} ${esc(topic.title)}</h1>
     </div>
-    ${video}
+    ${dock}
+    ${chapters}
     ${extras.length ? `<div class="chips">${extras.join("")}</div>` : ""}
     <div class="card prose">${topic.theory}</div>
     <h2 class="group">✍️ Практика</h2>
@@ -624,9 +649,12 @@ function viewTopic(id) {
       ${prev ? `<button class="btn ghost" data-go="#/t/${prev.id}">← ${prev.id}</button>` : ""}
       ${next ? `<button class="btn ghost" data-go="#/t/${next.id}">${next.id} →</button>` : ""}
     </div>`;
-  actions.play = (player) => {
-    player.innerHTML = `<iframe src="${ytEmbed(section.video, first.start)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`;
-    player.removeAttribute("data-act");
+  actions.play = (button) => Video.play(button.dataset.video, Number(button.dataset.start) || 0);
+  actions.theater = () => Video.toggleTheater();
+  actions.stop = () => Video.stop();
+  actions.youtube = () => {
+    Video.command("pauseVideo", []);
+    openLink(yt(Video.id || intro.video, Video.start));
   };
   const todo = topic.tasks.find((task) => !isSolved(task.id)) || topic.tasks[0];
   return {
@@ -634,6 +662,124 @@ function viewTopic(id) {
     back: `#/s/${section.num}`,
     main: { text: `✍️ Задача «${todo.title}»`, onClick: () => go(`#/k/${todo.id}`) },
   };
+}
+
+// ================================================================== видеоплеер
+
+/* Плеер темы. Пока видео играет, он закреплён вверху экрана, а конспект прокручивается под ним.
+   Главы и шорты включаются в этом же плеере: перемотка идёт командами YouTube (postMessage).
+   «⤢ На весь экран» разворачивает плеер и просит Telegram перейти в полноэкранный режим. */
+const Video = {
+  id: null, // какое видео загружено
+  start: 0, // с какой секунды его в последний раз включали
+  frame: null,
+  loadedAt: 0,
+  cover: "",
+  theater: false,
+
+  dock: () => document.getElementById("dock"),
+
+  play(videoId, start) {
+    const dock = this.dock();
+    if (!dock) return;
+    const player = dock.querySelector(".player");
+    this.start = start;
+    if (this.frame && this.id === videoId && this.loadedAt && Date.now() - this.loadedAt > 600) {
+      this.command("seekTo", [start, true]); // то же видео уже загружено — просто перематываем
+      this.command("playVideo", []);
+    } else {
+      if (!this.frame) this.cover = player.innerHTML;
+      this.id = videoId;
+      this.loadedAt = 0;
+      player.classList.add("playing");
+      player.innerHTML = `<iframe src="${ytEmbed(videoId, start)}" title="Видео"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`;
+      this.frame = player.querySelector("iframe");
+      this.frame.addEventListener("load", () => { this.loadedAt = Date.now(); });
+    }
+    dock.classList.add("active");
+    dock.querySelector(".player-bar").hidden = false;
+    haptic("tap");
+  },
+
+  command(func, args) {
+    try {
+      this.frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
+    } catch (e) { /* плеер ещё не загрузился */ }
+  },
+
+  stop() {
+    this.exitTheater();
+    const dock = this.dock();
+    if (dock && this.frame) {
+      const player = dock.querySelector(".player");
+      player.classList.remove("playing");
+      player.innerHTML = this.cover;
+      dock.classList.remove("active");
+      dock.querySelector(".player-bar").hidden = true;
+    }
+    this.frame = null;
+    this.id = null;
+    this.loadedAt = 0;
+  },
+
+  /** Экран сменился: плеер уже удалён вместе со старой разметкой. */
+  reset() {
+    this.exitTheater();
+    this.frame = null;
+    this.id = null;
+    this.loadedAt = 0;
+    this.cover = "";
+  },
+
+  toggleTheater() {
+    if (this.theater) this.exitTheater();
+    else this.enterTheater();
+  },
+
+  enterTheater() {
+    const dock = this.dock();
+    if (!dock || !this.frame) return;
+    this.theater = true;
+    dock.classList.add("theater");
+    document.documentElement.classList.add("no-scroll");
+    dock.querySelector('[data-act="theater"]').textContent = "✕ Свернуть";
+    overlayClose = () => this.exitTheater(); // «Назад» в Telegram сначала сворачивает видео
+    if (IN_TG && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0")) {
+      try { tg.requestFullscreen(); } catch (e) { /* не поддерживается — останется развёрнутым в окне */ }
+      try { tg.unlockOrientation(); } catch (e) { /* можно повернуть телефон */ }
+    } else if (dock.requestFullscreen) {
+      dock.requestFullscreen().catch(() => {});
+    }
+    if (IN_TG) tg.BackButton.show();
+  },
+
+  exitTheater() {
+    if (!this.theater) return;
+    this.theater = false;
+    overlayClose = null;
+    const dock = this.dock();
+    if (dock) {
+      dock.classList.remove("theater");
+      const button = dock.querySelector('[data-act="theater"]');
+      if (button) button.textContent = "⤢ На весь экран";
+    }
+    document.documentElement.classList.remove("no-scroll");
+    try { if (IN_TG && tg.isFullscreen) tg.exitFullscreen(); } catch (e) { /* уже вышли */ }
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  },
+};
+
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && Video.theater && !IN_TG) Video.exitTheater();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && Video.theater) Video.exitTheater();
+});
+if (IN_TG) {
+  tg.onEvent("fullscreenChanged", () => {
+    if (!tg.isFullscreen && Video.theater) Video.exitTheater();
+  });
 }
 
 function viewTask(id) {

@@ -170,18 +170,56 @@ h2.group {
 .prose b { font-weight: 650; }
 
 /* ------------------------------------------------------------------ видео */
-.video { padding: 0; overflow: hidden; }
+.player-dock { margin: 12px 0; }
 .player {
-  position: relative; aspect-ratio: 16 / 9; background: #000 center / cover no-repeat;
-  display: grid; place-items: center; cursor: pointer;
+  position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius); overflow: hidden;
 }
-.player::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 40%, rgba(0, 0, 0, 0.55)); }
+/* обложка до запуска: картинка, кнопка ▶ и подпись */
+.player .cover {
+  position: absolute; inset: 0; width: 100%; border: 0; padding: 0; cursor: pointer;
+  background: #000 center / cover no-repeat; display: grid; place-items: center;
+}
+.player .cover::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(transparent 40%, rgba(0, 0, 0, 0.55));
+}
 .player .play-big {
   position: relative; z-index: 1; width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center;
   background: rgba(255, 0, 0, 0.9); color: #fff; font-size: 26px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
-.player .label { position: absolute; z-index: 1; left: 14px; bottom: 10px; color: #fff; font-size: 14px; font-weight: 600; }
+.player .label {
+  position: absolute; z-index: 1; left: 14px; right: 14px; bottom: 10px; text-align: left;
+  color: #fff; font-size: 14px; font-weight: 600;
+}
+/* само видео: поверх него ничего нет, все кнопки YouTube нажимаются */
 .player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+/* пока видео играет, плеер закреплён вверху экрана, а конспект прокручивается под ним */
+.player-dock.active {
+  position: sticky; top: 0; z-index: 30; margin: 0 -16px 12px; padding: 0 16px 8px;
+  background: var(--bg); box-shadow: 0 8px 12px -12px rgba(0, 0, 0, 0.5);
+}
+.player-dock.active .player { width: min(100%, calc(36vh * 16 / 9)); margin: 0 auto; }
+.player-bar { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding-top: 8px; }
+.player-bar[hidden] { display: none; }
+.player-bar .tool { padding: 7px 12px; font-size: 14px; }
+
+/* «⤢ На весь экран»: плеер занимает весь экран, фон чёрный, кнопки внизу */
+.player-dock.theater {
+  position: fixed; inset: 0; z-index: 1000; margin: 0; padding: 0; box-shadow: none;
+  background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.player-dock.theater .player { width: min(100vw, calc((100vh - 72px) * 16 / 9)); border-radius: 0; }
+@supports (height: 100dvh) {
+  .player-dock.theater .player { width: min(100vw, calc((100dvh - 72px) * 16 / 9)); }
+}
+.player-dock.theater .player-bar {
+  position: absolute; left: 0; right: 0; bottom: calc(12px + env(safe-area-inset-bottom));
+}
+.player-dock.theater .tool { background: rgba(255, 255, 255, 0.16); color: #fff; }
+html.no-scroll, html.no-scroll body { overflow: hidden; }
+
+.video { padding: 0; overflow: hidden; }
 .video .head { padding: 12px 16px 4px; font-weight: 600; }
 .video .head span { color: var(--hint); font-weight: 400; }
 .time { font-family: var(--mono); font-size: 13px; color: var(--link); flex: none; min-width: 52px; }
