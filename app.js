@@ -653,8 +653,9 @@ function viewTopic(id) {
   actions.theater = () => Video.toggleTheater();
   actions.stop = () => Video.stop();
   actions.youtube = () => {
-    Video.command("pauseVideo", []);
-    openLink(yt(Video.id || intro.video, Video.start));
+    const second = Video.currentTime();
+    Video.pause();
+    openLink(yt(Video.id || intro.video, second));
   };
   const todo = topic.tasks.find((task) => !isSolved(task.id)) || topic.tasks[0];
   return {
@@ -667,68 +668,144 @@ function viewTopic(id) {
 // ================================================================== видеоплеер
 
 /* Плеер темы. Пока видео играет, он закреплён вверху экрана, а конспект прокручивается под ним.
-   Главы и шорты включаются в этом же плеере: перемотка идёт командами YouTube (postMessage).
+   Главы и шорты включаются в этом же плеере через официальный YouTube IFrame API
+   (перемотка без перезагрузки); если API не загрузился — обычный iframe с нужной секунды.
    «⤢ На весь экран» разворачивает плеер и просит Telegram перейти в полноэкранный режим. */
 const Video = {
-  id: null, // какое видео загружено
+  id: null, // какое видео сейчас в плеере
   start: 0, // с какой секунды его в последний раз включали
-  frame: null,
-  loadedAt: 0,
+  player: null, // YT.Player из официального API YouTube
+  frame: null, // iframe с видео
+  apiLoading: null,
   cover: "",
   theater: false,
 
   dock: () => document.getElementById("dock"),
 
-  play(videoId, start) {
+  /** Загружает официальный YouTube IFrame API. true — готов, false — не загрузился (тогда обычный iframe). */
+  api() {
+    if (window.YT && window.YT.Player) return Promise.resolve(true);
+    if (!this.apiLoading) {
+      this.apiLoading = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), 8000);
+        window.onYouTubeIframeAPIReady = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        script.onerror = () => {
+          clearTimeout(timer);
+          resolve(false);
+        };
+        document.head.appendChild(script);
+      });
+    }
+    return this.apiLoading;
+  },
+
+  async play(videoId, start) {
     const dock = this.dock();
     if (!dock) return;
-    const player = dock.querySelector(".player");
     this.start = start;
-    if (this.frame && this.id === videoId && this.loadedAt && Date.now() - this.loadedAt > 600) {
-      this.command("seekTo", [start, true]); // то же видео уже загружено — просто перематываем
-      this.command("playVideo", []);
-    } else {
-      if (!this.frame) this.cover = player.innerHTML;
-      this.id = videoId;
-      this.loadedAt = 0;
-      player.classList.add("playing");
-      player.innerHTML = `<iframe src="${ytEmbed(videoId, start)}" title="Видео"
-        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`;
-      this.frame = player.querySelector("iframe");
-      this.frame.addEventListener("load", () => { this.loadedAt = Date.now(); });
-    }
     dock.classList.add("active");
     dock.querySelector(".player-bar").hidden = false;
     haptic("tap");
+    if (this.player) { // плеер уже есть: перематываем или переключаем ролик без перезагрузки
+      if (this.id === videoId) {
+        this.player.seekTo(start, true);
+        this.player.playVideo();
+      } else {
+        this.player.loadVideoById({ videoId, startSeconds: start });
+      }
+      this.id = videoId;
+      return;
+    }
+    const holder = dock.querySelector(".player");
+    if (this.frame) { // запасной режим без API: перезагружаем ролик с нужной секунды
+      this.frame.src = ytEmbed(videoId, start);
+      this.id = videoId;
+      return;
+    }
+    this.cover = holder.innerHTML;
+    this.id = videoId;
+    holder.classList.add("playing");
+    holder.innerHTML = `<div id="yt-player"></div><div class="player-wait"><span class="spinner"></span></div>`;
+    const apiReady = await this.api();
+    const slot = document.getElementById("yt-player");
+    if (!slot || this.id !== videoId) return; // пока грузилось, экран сменили или плеер закрыли
+    holder.querySelector(".player-wait").remove();
+    if (apiReady) {
+      this.player = new YT.Player(slot, {
+        host: "https://www.youtube-nocookie.com",
+        videoId,
+        width: "100%",
+        height: "100%",
+        playerVars: { start, autoplay: 1, rel: 0, playsinline: 1, fs: 1 },
+        events: {
+          onReady: (event) => event.target.playVideo(),
+          onError: () => this.showProblem(),
+        },
+      });
+      this.frame = this.player.getIframe();
+    } else {
+      holder.innerHTML = `<iframe src="${ytEmbed(videoId, start)}" title="Видео"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`;
+      this.frame = holder.querySelector("iframe");
+      this.showProblem(true);
+    }
   },
 
-  command(func, args) {
+  /** Подсказка под плеером, если YouTube не грузится (в России ему часто нужен VPN). */
+  showProblem(maybe = false) {
+    const dock = this.dock();
+    if (!dock || dock.querySelector(".player-note")) return;
+    const text = maybe
+      ? "Если видео не загружается — нажми «В YouTube» или включи VPN."
+      : "Это видео не играет внутри приложения. Нажми «В YouTube» — откроется с этого же места.";
+    dock.querySelector(".player-bar").insertAdjacentHTML("afterend", `<div class="player-note">${text}</div>`);
+  },
+
+  /** Секунда, на которой сейчас видео (для «В YouTube»). */
+  currentTime() {
     try {
-      this.frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
-    } catch (e) { /* плеер ещё не загрузился */ }
+      return Math.floor(this.player.getCurrentTime()) || this.start;
+    } catch (e) {
+      return this.start;
+    }
+  },
+
+  pause() {
+    try { if (this.player) this.player.pauseVideo(); } catch (e) { /* ещё не готов */ }
+  },
+
+  forget() {
+    try { if (this.player) this.player.destroy(); } catch (e) { /* уже удалён */ }
+    this.player = null;
+    this.frame = null;
+    this.id = null;
   },
 
   stop() {
     this.exitTheater();
     const dock = this.dock();
-    if (dock && this.frame) {
-      const player = dock.querySelector(".player");
-      player.classList.remove("playing");
-      player.innerHTML = this.cover;
+    const wasPlaying = this.frame || this.id;
+    this.forget();
+    if (dock && wasPlaying) {
+      const holder = dock.querySelector(".player");
+      holder.classList.remove("playing");
+      holder.innerHTML = this.cover;
       dock.classList.remove("active");
       dock.querySelector(".player-bar").hidden = true;
+      const note = dock.querySelector(".player-note");
+      if (note) note.remove();
     }
-    this.frame = null;
-    this.id = null;
-    this.loadedAt = 0;
   },
 
-  /** Экран сменился: плеер уже удалён вместе со старой разметкой. */
+  /** Экран сменился: старая разметка уже удалена. */
   reset() {
     this.exitTheater();
-    this.frame = null;
-    this.id = null;
-    this.loadedAt = 0;
+    this.forget();
     this.cover = "";
   },
 

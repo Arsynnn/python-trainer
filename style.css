@@ -49,13 +49,13 @@ body {
 a { color: var(--link); text-decoration: none; }
 button { font: inherit; color: inherit; }
 
+/* без анимации появления: transform на .page ломал бы position: fixed у видео на весь экран */
 .page {
   max-width: 720px;
   margin: 0 auto;
   padding: 12px 16px calc(40px + env(safe-area-inset-bottom));
-  animation: appear 0.18s ease-out;
 }
-@keyframes appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* ------------------------------------------------------------------ загрузка */
 .boot {
@@ -193,6 +193,10 @@ h2.group {
 }
 /* само видео: поверх него ничего нет, все кнопки YouTube нажимаются */
 .player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.player-wait { position: absolute; inset: 0; display: grid; place-items: center; }
+.player-wait .spinner { width: 30px; height: 30px; border-color: rgba(255, 255, 255, 0.25); border-top-color: #fff; }
+.player-note { font-size: 13px; color: var(--hint); text-align: center; padding: 6px 8px 0; }
+.player-dock.theater .player-note { display: none; }
 
 /* пока видео играет, плеер закреплён вверху экрана, а конспект прокручивается под ним */
 .player-dock.active {
@@ -294,7 +298,7 @@ details.stdin textarea {
 .toast {
   position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: rgba(20, 22, 26, 0.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px;
-  z-index: 50; max-width: calc(100% - 32px); animation: appear 0.2s ease-out;
+  z-index: 50; max-width: calc(100% - 32px); animation: fade-in 0.2s ease-out;
 }
 
 /* ------------------------------------------------------------------ редактор кода (CodeMirror) */
