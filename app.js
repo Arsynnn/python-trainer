@@ -326,9 +326,9 @@ const Py = {
     return this.call("check", { taskId: task.id, code, needsPytest: task.type === "tests" }, timeout);
   },
 
-  async run(code, stdin) {
+  async run(code, stdin, eof = false) {
     await this.start();
-    return this.call("run", { code, stdin }, 20000);
+    return this.call("run", { code, stdin, eof }, 20000);
   },
 };
 
@@ -883,11 +883,6 @@ function viewTask(id) {
         placeholder="Пиши код здесь…"></textarea>
       ${TOUCH ? `<div class="keys">${keys.map((key) => `<button class="key" data-act="key" data-key="${esc(key)}">${esc(key)}</button>`).join("")}</div>` : ""}
     </div>
-    ${task.type !== "tests" ? `
-      <details class="card stdin">
-        <summary>⌨️ Ввод для «Запустить»</summary>
-        <textarea id="stdin" placeholder="Каждая строка — ответ на один input()"></textarea>
-      </details>` : ""}
     <div class="pystatus" id="pystatus">${pyStatusHtml(Py.state)}</div>
     <div class="btns">
       ${task.type !== "tests" ? `<button class="btn secondary" data-act="run">▶ Запустить</button>` : ""}
@@ -980,6 +975,72 @@ function viewTask(id) {
     $("#result").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  /* «▶ Запустить» работает как терминал: когда программа вызывает input(), под выводом
+     появляется поле для ответа. Программа перезапускается со всеми ответами по порядку,
+     поэтому для ученика это выглядит как обычный диалог с программой. */
+  let session = null; // { code, answers: [], output }
+
+  function showConsole(state) {
+    const output = state.output || "";
+    const empty = state.running ? "" : "(программа ничего не напечатала)";
+    const tail = state.running ? `<span class="spinner inline"></span>` : "";
+    let controls = "";
+    if (state.needInput) {
+      const label = state.prompt && state.prompt.trim() ? `Ответ на «${state.prompt.trim()}»` : "Введи строку и нажми Enter";
+      controls = `
+        <form class="console-in" id="console-in">
+          <input id="console-line" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+            enterkeyhint="send" placeholder="${esc(label)}">
+          <button class="btn small" type="submit">↵</button>
+        </form>
+        <div class="console-tools">
+          <span class="sub">Программа ждёт ввода</span>
+          <button class="tool" data-act="eof" title="Как Ctrl+D: следующий input() бросит EOFError">Конец ввода</button>
+          <button class="tool" data-act="run">↺ Заново</button>
+        </div>`;
+    } else if (!state.running) {
+      controls = `<div class="console-tools"><button class="tool" data-act="run">↺ Запустить ещё раз</button></div>`;
+    }
+    showResult(`
+      <div class="card result run console">
+        <div class="result-title">▶ Консоль</div>
+        <pre class="console-out">${esc(output) || empty}${tail}</pre>
+        ${controls}
+        ${state.problem ? `<div class="console-error">${tgToWeb(state.problem)}</div>` : ""}
+      </div>`);
+    const form = $("#console-in");
+    if (form) {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        session.answers.push($("#console-line").value);
+        runStep();
+      });
+      $("#console-line").focus({ preventScroll: true });
+    }
+  }
+
+  async function runStep(eof = false) {
+    if (busy || !session) return;
+    busy = true;
+    if (Py.state === "ready") showConsole({ running: true, output: session.output });
+    else showResult(waiting("Загружаю Python и запускаю… в первый раз это до минуты"));
+    let reply;
+    try {
+      const stdin = session.answers.map((answer) => answer + "\n").join("");
+      reply = await Py.run(session.code, stdin, eof);
+    } catch (error) {
+      reply = { error: String(error.message || error) };
+    }
+    busy = false;
+    if (reply.error) {
+      reply = { output: session.output, problem: `Python не запустился: ${esc(reply.error)}` };
+    } else if (reply.hung) {
+      reply = { output: session.output, problem: "⏱ Программа зависла — похоже, бесконечный цикл. Python перезапущен." };
+    }
+    session.output = reply.output || "";
+    showConsole(reply);
+  }
+
   async function run() {
     if (busy) return;
     const code = editor.getValue();
@@ -987,22 +1048,14 @@ function viewTask(id) {
       toast("Сначала напиши код 🙂");
       return;
     }
-    busy = true;
-    showResult(waiting(Py.state !== "ready" ? "Загружаю Python и запускаю…" : "Запускаю…"));
-    let reply;
-    try {
-      reply = await Py.run(code, $("#stdin") ? $("#stdin").value : "");
-    } catch (error) {
-      reply = { error: String(error.message || error) };
-    }
-    busy = false;
-    if (reply.error) showResult(`<div class="card result fail">${esc(reply.error)}</div>`);
-    else if (reply.hung) showResult(`<div class="card result fail">⏱ Программа зависла — похоже, бесконечный цикл. Python перезапущен.</div>`);
-    else showResult(`<div class="card result run"><div class="result-title">▶ Результат запуска</div>${tgToWeb(reply.html)}</div>`);
+    session = { code, answers: [], output: "" };
+    await runStep();
+    $("#result").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   actions.check = check;
   actions.run = run;
+  actions.eof = () => runStep(true);
   actions.key = (button) => editor.insert(button.dataset.key === "⇥" ? "    " : button.dataset.key);
   actions.starter = async () => {
     if (editor.getValue().trim() && !(await confirmBox("Заменить твой код шаблоном?"))) return;
@@ -1074,7 +1127,7 @@ function viewAbout() {
     <div class="top"><div class="crumb"><a href="#/">Курс</a></div><h1>❓ Как это работает</h1></div>
     <div class="card prose">
       <b>1. Теория.</b> В каждой теме есть короткий конспект и главы лекции CS50P с таймкодами. Видео можно смотреть прямо здесь или открыть в YouTube с нужной минуты. Лекции на английском: включи ⚙️ → «Субтитры» → «Перевести» → «Русский». У лекций 0 и 1 есть русская ИИ-озвучка: ⚙️ → «Звуковая дорожка».<br><br>
-      <b>2. Практика.</b> Пиши код в редакторе. «▶ Запустить» выполняет программу с твоим вводом, «✅ Проверить» прогоняет её по тестам задачи. Python работает прямо в Telegram: при первом запуске он загружается (около 10 МБ), потом всё быстро.<br><br>
+      <b>2. Практика.</b> Пиши код в редакторе. «▶ Запустить» выполняет программу как в терминале: когда она вызывает <code>input()</code>, под выводом появляется поле для ответа. «Конец ввода» — это как Ctrl+D: следующий <code>input()</code> бросит <code>EOFError</code>. «✅ Проверить» прогоняет программу по тестам задачи, и ввод для тестов подаётся сам. Python работает прямо в Telegram: при первом запуске он загружается (около 10 МБ), потом всё быстро.<br><br>
       <b>Как проверяется код</b><br>
       • Программы: подаётся ввод и сравнивается то, что напечатал <code>print</code>. Текст приглашения в <code>input("...")</code> не учитывается.<br>
       • Функции и классы: код импортируется, функции вызываются по одной. Запуск <code>main()</code> оборачивай в <code>if __name__ == "__main__":</code>.<br>

@@ -52,7 +52,7 @@ async function handle(type, payload) {
     return JSON.parse(webcheck.check(payload.taskId, payload.code));
   }
   if (type === "run") {
-    return JSON.parse(webcheck.run(payload.code, payload.stdin || ""));
+    return JSON.parse(webcheck.run(payload.code, payload.stdin || "", Boolean(payload.eof)));
   }
   throw new Error("Неизвестная команда: " + type);
 }

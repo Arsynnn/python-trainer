@@ -255,18 +255,22 @@ html.no-scroll, html.no-scroll body { overflow: hidden; }
   color: var(--text); font: 600 15px var(--mono); cursor: pointer;
 }
 .key:active { background: var(--accent-soft); }
-details.stdin { padding: 0; }
-details.stdin summary {
-  list-style: none; cursor: pointer; padding: 12px 16px; font-size: 15px; display: flex; justify-content: space-between;
+/* консоль «▶ Запустить»: вывод программы и поле для ответа на input() */
+.console .console-out {
+  margin: 6px 0 0; padding: 12px 14px; border-radius: 10px; background: #0f1115; color: #e6e9ef;
+  font: 14px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto;
 }
-details.stdin summary::-webkit-details-marker { display: none; }
-details.stdin summary::after { content: "›"; color: var(--hint); transform: rotate(90deg); transition: transform 0.2s; }
-details.stdin[open] summary::after { transform: rotate(-90deg); }
-details.stdin textarea {
-  display: block; width: calc(100% - 32px); margin: 0 16px 14px; min-height: 76px; border: 1px solid var(--line);
-  border-radius: 10px; padding: 10px 12px; font: 14px/1.45 var(--mono); background: var(--bg); color: var(--text);
-  resize: vertical;
+.console-in { display: flex; gap: 8px; margin-top: 8px; }
+.console-in input {
+  flex: 1; min-width: 0; height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px;
+  font: 16px var(--mono); background: var(--bg); color: var(--text); outline: none;
 }
+.console-in input:focus { border-color: var(--accent); }
+.console-in .btn.small { min-height: 44px; min-width: 52px; }
+.console-tools { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.console-tools .sub { margin-right: auto; font-size: 13px; }
+.console-error { margin-top: 10px; }
+.spinner.inline { display: inline-block; width: 12px; height: 12px; border-width: 2px; vertical-align: -2px; }
 .pystatus { font-size: 13px; color: var(--hint); display: flex; align-items: center; gap: 8px; margin: 4px 4px 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hint); flex: none; }
 .dot.loading { background: var(--warn); animation: pulse 1s infinite; }
